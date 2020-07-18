@@ -48,16 +48,37 @@ defmodule ThullaEngine.Table do
         end
     end
 
-    def handle_call({:make_move, card}, _from, state) do
+    def handle_call({:make_move, card}, _from, state) do  
         with {:ok, rules} <- Rules.check(state.rules, state.turn)
         do
-            state
-            |> update_player_deck(card)
-            |> update_table_pot(card)
-            |> update_rules(rules)
-            |> update_turn()
-            |> empty_pot()
-            |> reply_success(:ok)
+            player = get_player(state.turn)
+            case state[player].winner do
+                true -> state
+                        |> update_rules(rules)
+                        |> update_turn()
+                        |> empty_pot()
+                        |> reply_success(:winner)
+                false -> case MapSet.size(state[player].deck) do
+                            0 ->    put_in(state[player].winner, true)
+                                    |> update_winners()
+                                    |> update_rules(rules)
+                                    |> update_turn()
+                                    |> check_game_over()
+                                    |> final_reply()
+                            _ ->    case MapSet.member?(state[player].deck, card) do
+                                        true -> state
+                                                |> update_player_deck(card)
+                                                |> update_table_pot(card)
+                                                |> update_rules(rules)
+                                                |> update_turn()
+                                                |> empty_pot()
+                                                |> reply_success(:move_success)
+                                        false -> state
+                                                |> reply_success(:wrong_card)
+                                    end
+                        end
+            end
+                     
         else
             :error -> {:reply, :error, state}
         end
@@ -73,12 +94,12 @@ defmodule ThullaEngine.Table do
         [deck_three | tail] = tail
         [deck_four | _] = tail
         
-        player_one = %{name: name, deck: MapSet.new(deck_one)} 
-        player_two = %{name: nil, deck: MapSet.new(deck_two)}
-        player_three = %{name: nil, deck: MapSet.new(deck_three)}
-        player_four = %{name: nil, deck: MapSet.new(deck_four)}
+        player_one = %{name: name, deck: MapSet.new(deck_one), winner: false} 
+        player_two = %{name: nil, deck: MapSet.new(deck_two), winner: false}
+        player_three = %{name: nil, deck: MapSet.new(deck_three), winner: false}
+        player_four = %{name: nil, deck: MapSet.new(deck_four), winner: false}
 
-        {turn} = first_turn(player_one, player_two, player_three, player_four)
+        turn = first_turn(player_one, player_two, player_three, player_four)
         table_pot = TablePot.new('C')
         %{
             player_one: player_one, 
@@ -89,7 +110,8 @@ defmodule ThullaEngine.Table do
             table_pot: table_pot,
             rules: Rules.new(),
             no_of_turns: 0,
-            first_turn: true
+            first_turn: true,
+            winners: 0
         }
     end
 
@@ -102,10 +124,10 @@ defmodule ThullaEngine.Table do
         d = check_for_ace?(player_four)
 
         case {a, b, c, d} do
-            {true,_,_,_}    ->   {:player_one_turn}
-            {_,true,_,_}    ->   {:player_two_turn}
-            {_,_,true,_}    ->   {:player_three_turn}
-            {_,_,_,true}    ->   {:player_four_turn}
+            {true,_,_,_}    ->   :player_one_turn
+            {_,true,_,_}    ->   :player_two_turn
+            {_,_,true,_}    ->   :player_three_turn
+            {_,_,_,true}    ->   :player_four_turn
         end
     end
 
@@ -147,20 +169,10 @@ defmodule ThullaEngine.Table do
 
     ## Update the game pot on each turn
     defp update_table_pot(%{player: player, state: state}, card) do
-        [_rank | suit] = card
-        
-        s = case state[:table_pot].suit === nil do
-            true -> put_in(state[:table_pot], TablePot.set_suit(state[:table_pot], suit))
-            false -> state
-        end
-        
-        case TablePot.add_card(s.table_pot, card, player) do
-            {:ok, :thulla_call} -> case s.first_turn do 
-                                    false -> thulla(s, card)
-                                    true ->  put_in(s[:table_pot], TablePot.add_badrang_card(s.table_pot, card, player))
-                                   end
-            {:ok, pot} -> put_in(s[:table_pot], pot)
-        end
+        [_rank | suit] = card   
+        state
+        |> set_suit_for_new_round(suit)
+        |> add_card_to_pot_or_thulla(card, player) 
     end
 
     ## Updates the next player turn
@@ -233,5 +245,64 @@ defmodule ThullaEngine.Table do
 
     defp reset_no_of_turns(state) do
         put_in(state[:no_of_turns], 0)
+    end
+
+    defp set_suit_for_new_round(state, suit) do
+        case state[:table_pot].suit === nil do
+            true -> put_in(state[:table_pot], TablePot.set_suit(state[:table_pot], suit))
+            false -> state
+        end
+    end
+
+    defp add_card_to_pot_or_thulla(state, card, player) do
+        case TablePot.add_card(state.table_pot, card, player) do
+            {:ok, :thulla_call} -> check_first_turn(state, card, player)
+            {:ok, pot} -> put_in(state[:table_pot], pot)
+        end
+    end
+
+    defp check_first_turn(state, card, player) do
+        case state.first_turn do 
+            false -> thulla(state, card)
+            true ->  put_in(state[:table_pot], TablePot.add_badrang_card(state.table_pot, card, player))
+        end
+    end
+
+    defp update_winners(state) do 
+        update_in(state[:winners], &(&1 + 1))
+    end
+
+    defp check_winner_players(state) do
+        case  { check_winner(state.player_one), 
+                check_winner(state.player_two), 
+                check_winner(state.player_three), 
+                check_winner(state.player_four)}
+        do 
+            {false, _, _, _} -> %{loser: {:player_one}, winner: {:player_two, :player_three, :player_four}}
+            {_, false, _, _} -> %{loser: {:player_two}, winner: {:player_one, :player_three, :player_four}}
+            {_, _, false, _} -> %{loser: {:player_three}, winner: {:player_one, :player_two, :player_four}}
+            {_, _, _, false} -> %{loser: {:player_four}, winner: {:player_one, :player_two, :player_three}}
+        end
+    end
+
+    defp check_winner(%{} = player) do
+        case player.winner do
+            true -> true
+            false -> false
+        end
+    end
+
+    defp check_game_over(state) do
+        case state.winners do
+            3 -> %{result: check_winner_players(state), state: state}
+            _ -> state
+        end
+    end
+
+    defp final_reply(res) do
+        case res do
+            {result, state} -> {:reply, result, fresh_state(state.player_one.name)}
+            _ -> {:reply, :winner, res}
+        end
     end
 end
