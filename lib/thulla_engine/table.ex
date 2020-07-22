@@ -42,8 +42,9 @@ defmodule ThullaEngine.Table do
 
   def handle_call({:player_move, player, card}, _from, state) do
     cond do
-      state.rules.state != :dealt_cards -> 
+      state.rules.state != :dealt_cards ->
         reply_success(state, :error)
+
       player != state.turn ->
         reply_success(state, {:error, :invalid_player})
 
@@ -56,7 +57,7 @@ defmodule ThullaEngine.Table do
         |> update_player_deck(card)
         |> update_table_pot(card)
         |> update_turn()
-        |> empty_pot()      
+        |> empty_pot()
         |> reply_success(:ok)
     end
   end
@@ -64,17 +65,17 @@ defmodule ThullaEngine.Table do
   ### Game Logic
   ## Returns the fresh state of table
   def fresh_state(name) do
-    l = test_deck()
+    l = chunked_deck()
 
     [deck_one | tail] = l
     [deck_two | tail] = tail
     [deck_three | tail] = tail
     [deck_four | _] = tail
 
-    player_one = %{name: name, deck: MapSet.new(deck_one)}
-    player_two = %{name: nil, deck: MapSet.new(deck_two)}
-    player_three = %{name: nil, deck: MapSet.new(deck_three)}
-    player_four = %{name: nil, deck: MapSet.new(deck_four)}
+    player_one = %{name: name, deck: MapSet.new(deck_one), winner: false}
+    player_two = %{name: nil, deck: MapSet.new(deck_two), winner: false}
+    player_three = %{name: nil, deck: MapSet.new(deck_three), winner: false}
+    player_four = %{name: nil, deck: MapSet.new(deck_four), winner: false}
 
     turn = first_turn(player_one, player_two, player_three, player_four)
     table_pot = TablePot.new('C')
@@ -122,13 +123,12 @@ defmodule ThullaEngine.Table do
     MapSet.member?(player.deck, 'AC')
   end
 
-
   defp test_deck() do
     [
-      ['AC', '1C'],
+      ['AC', '3D'],
       ['2C', '3H'],
       ['4C', '4H'],
-      ['3S', 'TH', '2H']
+      ['3S', 'TH', '2D']
     ]
   end
 
@@ -158,7 +158,6 @@ defmodule ThullaEngine.Table do
 
   defp update_table_pot(state, card) do
     player = get_player_from_index(state.turn)
-    IO.inspect state.players[player].deck
     [_rank | suit] = card
 
     state
@@ -181,7 +180,6 @@ defmodule ThullaEngine.Table do
   end
 
   defp is_valid_thulla(state, card, player) do
-
     case state.is_first_turn do
       false -> thulla(state, card)
       true -> put_in(state.table_pot, TablePot.add_badrang_card(state.table_pot, card, player))
@@ -190,6 +188,7 @@ defmodule ThullaEngine.Table do
 
   defp thulla(state, card) do
     bhabhi = TablePot.highest_card_player(state.table_pot)
+
     state
     |> add_pot_cards_to_deck(bhabhi)
     |> add_thulla_card(bhabhi, card)
@@ -208,7 +207,6 @@ defmodule ThullaEngine.Table do
   end
 
   defp new_turn(state, turns) do
-    IO.inspect(turns)
     put_in(state.no_of_turns, turns)
   end
 
@@ -234,20 +232,34 @@ defmodule ThullaEngine.Table do
   end
 
   defp check_winners(state) do
-    l = Enum.filter(state.players_turn, fn x -> MapSet.size(state.players[get_player_from_index(x)].deck) == 0 end)
+    l =
+      Enum.filter(state.players_turn, fn x ->
+        MapSet.size(state.players[get_player_from_index(x)].deck) == 0
+      end)
+
     s = put_in(state.players_turn, state.players_turn -- l)
+    
+    p = Enum.map(l, &(get_player_from_index(&1)))
+    Enum.map(p, fn x -> put_in(s.players[x].winner, true) end)
+    s = Enum.reduce(p, s, fn x, acc -> put_in(acc.players[x].winner, true) end)
+    
     {:ok, rules} = Rules.check(s.rules, :game_over)
-    IO.inspect "Check winners: "
-    IO.inspect Enum.count(s.players_turn)
-    case Enum.count(s.players_turn) == 1 do
-      true -> update_rules(s, rules)
-      false -> s
+
+
+    case Enum.count(s.players_turn) do
+      1 -> update_rules(s, rules)
+      0 -> update_rules(s, rules)
+           |> handle_tie()
+      _ -> s
     end
   end
 
+  defp handle_tie(state) do
+    loser = TablePot.highest_card_player(state.table_pot)
+    put_in(state.players[loser].winner, false)
+  end
+
   defp next_highest_card_player(state) do
-    IO.inspect "Highest card player: "
-    IO.inspect player_to_index(TablePot.highest_card_player(state.table_pot))
     put_in(state.turn, player_to_index(TablePot.highest_card_player(state.table_pot)))
   end
 
@@ -268,8 +280,6 @@ defmodule ThullaEngine.Table do
 
   def next_turn(state, turn_index) do
     index = rem(get_index(state, turn_index) + 1, Enum.count(state.players_turn))
-    IO.inspect "Next player turn: "
-    IO.inspect Enum.at(state.players_turn, index)
     Enum.at(state.players_turn, index)
   end
 
