@@ -8,18 +8,10 @@ defmodule ThullaEngine.Rules do
   def new(state), do: %Rules{state: state}
 
   def check(%Rules{state: :initialized} = rules, :add_player) do
-    {:ok, %Rules{rules | state: :player_two}}
+    {:ok, %Rules{rules | state: :added_players}}
   end
 
-  def check(%Rules{state: :player_two} = rules, :add_player) do
-    {:ok, %Rules{rules | state: :player_three}}
-  end
-
-  def check(%Rules{state: :player_three} = rules, :add_player) do
-    {:ok, %Rules{rules | state: :player_four}}
-  end
-
-  def check(%Rules{state: :player_four} = rules, :dealing_cards) do
+  def check(%Rules{state: :added_players} = rules, :dealing_cards) do
     {:ok, %Rules{rules | state: :dealt_cards}}
   end
 
@@ -28,5 +20,4 @@ defmodule ThullaEngine.Rules do
   end
 
   def check(_state, _action), do: :error
-
 end

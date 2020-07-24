@@ -44,4 +44,29 @@ defmodule ThullaEngine.TablePot do
   def add_badrang_card(%TablePot{} = pot, card, player) do
     %TablePot{cards: MapSet.put(pot.cards, {player, card}), suit: pot.suit}
   end
+
+  def remove_card(%TablePot{} = pot, player, is_first_turn) do
+    res = Enum.filter(pot.cards, fn {x, _y} -> x == player end)
+
+    p =
+      case res do
+        [] ->
+          pot
+
+        _ ->
+          [h | t] = res
+          %TablePot{pot | cards: MapSet.delete(pot.cards, h)}
+      end
+
+    case Enum.count(p.cards) do
+      0 ->
+        case is_first_turn do
+          true -> p
+          false -> set_suit(p, nil)
+        end
+
+      _ ->
+        p
+    end
+  end
 end
