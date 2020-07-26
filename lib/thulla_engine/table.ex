@@ -3,7 +3,7 @@ defmodule ThullaEngine.Table do
 
   use GenServer
 
-  @timeout 1000 * 10 * 5
+  @timeout :infinity #1000 * 10 * 5
 
   def new(), do: %{}
 
@@ -27,8 +27,9 @@ defmodule ThullaEngine.Table do
   ### INTERNAL GAME SERVER ###
   ############################
 
-  def init(_name) do
-    {:ok, fresh_state(), @timeout}
+  def init(name) do
+    send(self(), {:set_state, name})
+    {:ok, fresh_state(name), @timeout}
   end
 
   def handle_call({:next_round}, _from, state) do
@@ -71,7 +72,18 @@ defmodule ThullaEngine.Table do
     {:stop, {:shutdown, :timeout}, state}
   end
 
+  def handle_info({:set_state, name}, _state) do
+    state = case :ets.lookup(:table_state, name) do
+      [] -> fresh_state(name)
+      [{_key, state}] -> state
+    end
+
+    :ets.insert(:table_state, {name, state})
+    {:noreply, state, @timeout}
+  end
+
   def terminate({:shutdown, :timeout}, state) do
+    :ets.delete(:table_state, state.game_id)
     :ok
   end
 
@@ -114,7 +126,7 @@ defmodule ThullaEngine.Table do
   #########################
 
   ## Returns the fresh state of table
-  def fresh_state() do
+  def fresh_state(name) do
     l = chunked_deck()
 
     [deck_one | tail] = l
@@ -131,6 +143,7 @@ defmodule ThullaEngine.Table do
     table_pot = TablePot.new('C')
 
     %{
+      game_id: name,
       players: %{
         player_one: player_one,
         player_two: player_two,
@@ -160,8 +173,8 @@ defmodule ThullaEngine.Table do
 
     turn = first_turn(player_one, player_two, player_three, player_four)
     table_pot = TablePot.new('C')
-
     %{
+      game_id: state.game_id,
       players: %{
         player_one: player_one,
         player_two: player_two,
@@ -283,7 +296,8 @@ defmodule ThullaEngine.Table do
 
   ## Success reply
   defp reply_success(state, reply) do
-    {:reply, reply, state}
+    :ets.insert(:table_state, {state.game_id, state})
+    {:reply, reply, state, @timeout}
   end
 
   defp update_player_deck(state, card) do

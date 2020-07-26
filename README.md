@@ -22,7 +22,7 @@
  
 >- Add supervision to the game server (Done)
 
->- Add persistance to the state i.e make a stash (In process...)
+>- Add persistance to the state i.e make a stash (Done)
 
 
 

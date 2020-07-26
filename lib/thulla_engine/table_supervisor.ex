@@ -10,13 +10,14 @@ defmodule ThullaEngine.TableSupervisor do
     spec = %{
       id: Table,
       start: {Table, :start_link, [name]},
-      restart: :transient
+      restart: :permanent
     }
 
     DynamicSupervisor.start_child(__MODULE__, spec)
   end
 
   def stop_game(name) do
+    :ets.delete(:table_state, name)
     DynamicSupervisor.terminate_child(__MODULE__, pid_from_name(name))
   end
 

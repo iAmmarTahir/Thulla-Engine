@@ -11,6 +11,7 @@ defmodule ThullaEngine.Application do
       {Registry, keys: :unique, name: Registry.Table},
       {DynamicSupervisor, strategy: :one_for_one, name: ThullaEngine.TableSupervisor}
     ]
+    :ets.new(:table_state, [:public, :named_table])
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
