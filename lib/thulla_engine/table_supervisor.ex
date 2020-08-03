@@ -10,7 +10,7 @@ defmodule ThullaEngine.TableSupervisor do
     spec = %{
       id: Table,
       start: {Table, :start_link, [name]},
-      restart: :permanent
+      restart: :transient
     }
 
     DynamicSupervisor.start_child(__MODULE__, spec)
