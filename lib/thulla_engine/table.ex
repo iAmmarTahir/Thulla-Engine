@@ -20,7 +20,7 @@ defmodule ThullaEngine.Table do
 
   def remove_player(game, player), do: GenServer.call(game, {:remove_player, player})
 
-  def deal_cards(game), do: GenServer.call(game, {:dealing_cards})
+  def deal_cards(game, player), do: GenServer.call(game, {:dealing_cards, player})
 
   def player_move(game, player, card), do: GenServer.call(game, {:player_move, player, card})
 
@@ -93,17 +93,16 @@ defmodule ThullaEngine.Table do
 
   def terminate(_reason, _state), do: :ok
 
-  def handle_call({:dealing_cards}, _from, state) do
+  def handle_call({:dealing_cards, player}, _from, state) do
     with {:ok, rules} <- Rules.check(state.rules, :dealing_cards) do
-      s = state
-      |> update_rules(rules)
-      player_one = %{name: s.players[:player_one].name, cards: Enum.map(Enum.to_list(s.players[:player_one].deck), &(List.to_string(&1)))}
-      player_two = %{name: s.players[:player_two].name, cards: Enum.map(Enum.to_list(s.players[:player_two].deck), &(List.to_string(&1)))}
-      player_three = %{name: s.players[:player_three].name, cards: Enum.map(Enum.to_list(s.players[:player_three].deck), &(List.to_string(&1)))}
-      player_four = %{name: s.players[:player_four].name, cards: Enum.map(Enum.to_list(s.players[:player_four].deck), &(List.to_string(&1)))}
-      reply_success(s, %{player_one: player_one, player_two: player_two, player_three: player_three, player_four: player_four, first_turn: state.turn})
+      p = get_player_from_index(player)
+      cards = Enum.map(Enum.to_list(state.players[p].deck), &(List.to_string(&1)))
+      state
+      |> update_decks_dealt()
+      |> rules_update_or_not(rules) 
+      |> reply_success(%{cards: cards, first_turn: state.turn})
     else
-      :error -> {:reply, :error, state}
+      :error -> {:reply, %{error: "All cards are dealt"}, state}
     end
   end
 
@@ -175,7 +174,8 @@ defmodule ThullaEngine.Table do
       rules: Rules.new(),
       no_of_turns: 0,
       is_first_turn: true,
-      players_turn: [0, 1, 2, 3]
+      players_turn: [0, 1, 2, 3],
+      decks_dealt: 0
     }
   end
 
@@ -216,7 +216,8 @@ defmodule ThullaEngine.Table do
       rules: rules,
       no_of_turns: 0,
       is_first_turn: true,
-      players_turn: [0, 1, 2, 3]
+      players_turn: [0, 1, 2, 3],
+      decks_dealt: 0
     }
   end
 
@@ -290,6 +291,17 @@ defmodule ThullaEngine.Table do
     case state[:table] do
       nil -> %{state | rules: rules}
       _ -> put_in(state.table.rules, rules)
+    end
+  end
+
+  defp update_decks_dealt(state) do
+    update_in(state.decks_dealt, &(&1 + 1))
+  end
+
+  defp rules_update_or_not(state, rules) do
+    case state.decks_dealt do
+      4 -> update_rules(state, rules)
+      _ -> state
     end
   end
 
