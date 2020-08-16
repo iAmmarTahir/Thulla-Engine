@@ -1,6 +1,7 @@
 defmodule ThullaEngine.TablePot do
   defstruct [:cards, :suit]
   alias __MODULE__
+  alias ThullaEngine.Table
   def new(), do: %TablePot{cards: MapSet.new()}
   def new(suit), do: %TablePot{cards: MapSet.new(), suit: suit}
 
@@ -69,4 +70,11 @@ defmodule ThullaEngine.TablePot do
         p
     end
   end
+
+  def serialized_table_pot(%TablePot{} = pot) do
+    res = %{}
+    cards = Enum.map(Enum.to_list(pot.cards), fn {x, y} -> {Table.player_to_index(x), to_string(y)} end)
+    Map.put(res, :cards, Enum.into(cards, %{}))
+  end
+
 end

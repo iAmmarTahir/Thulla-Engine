@@ -34,7 +34,7 @@ defmodule ThullaEngine.Table do
   end
 
   def handle_call({:next_round}, _from, state) do
-    {:reply, :ok, updated_state(state)}
+    {:reply, %{msg: "Next round started"}, updated_state(state)}
   end
 
   def handle_call({:add_player, name}, _from, state) do
@@ -46,7 +46,7 @@ defmodule ThullaEngine.Table do
       joined_players = Enum.count(
              Enum.filter(s.state.players, fn x -> s.state.players[elem(x, 0)].joined == true end)
            )
-      reply_success(s.state, %{name: name, player: s.player, players_joined: joined_players})
+      reply_success(s.state, %{name: name, player: player_to_index(s.player), players_joined: joined_players})
     else
       :error -> {:reply, %{err: "Seats full"}, state}
     end
@@ -57,16 +57,20 @@ defmodule ThullaEngine.Table do
 
     case state.players[p].joined do
       true ->
-        state
+        s = state
         |> update_player_status(player)
         |> next_player_turn(player)
         |> update_no_of_turns(player)
         |> remove_tablepot_card(player)
         |> remove_from_turns(player)
-        |> reply_success({:ok, :player_removed, player})
+        case Enum.count(s.table_pot.cards) do
+          0 -> reply_success(s, %{player_removed: player, turn: s.turn, table_pot: TablePot.serialized_table_pot(s.table_pot)})
+          _ -> reply_success(s, %{player_removed: player, turn: s.turn})
+        end
+        
 
       false ->
-        {:reply, {:error, :player_not_joined}, state}
+        {:reply, %{error: "Player not joined"}, state}
     end
   end
 
@@ -109,16 +113,15 @@ defmodule ThullaEngine.Table do
   def handle_call({:player_move, player, card}, _from, state) do
     cond do
       state.rules.state != :dealt_cards ->
-        reply_success(state, :error)
+        reply_success(state, %{error: "Invalid State"})
 
       player != state.turn ->
-        reply_success(state, {:error, :invalid_player})
+        reply_success(state, %{error: "Invalid Player"})
 
-      MapSet.member?(state.players[get_player_from_index(player)].deck, card) == false ->
-        reply_success(state, {:error, :invalid_card})
+      MapSet.member?(state.players[get_player_from_index(player)].deck, card) == false and card != '1C' ->
+        reply_success(state, %{error: "Invalid Card"})
 
-      player == state.turn and
-          MapSet.member?(state.players[get_player_from_index(player)].deck, card) == true ->
+      player == state.turn ->
         s =
           %{res: %{}, table: state}
           |> update_player_deck(card)
@@ -129,11 +132,12 @@ defmodule ThullaEngine.Table do
         s =
           case s.res[:game_over] == nil do
             true ->
-              s = put_in(s.res, Map.put(s.res, :table_pot, s.table.table_pot))
-              put_in(s.res, Map.put(s.res, :next_turn, s.table.turn))
-
+              s 
+              |> add_table_pot_to_res
+              |> add_turn_to_res
             false ->
-              s
+              s = put_in(s.res, Map.delete(s.res, :thulla_cards))
+              put_in(s.res, Map.delete(s.res, :thulla_player))
           end
 
         reply_success(s.table, s.res)
@@ -247,7 +251,10 @@ defmodule ThullaEngine.Table do
 
   defp next_player_turn(state, player) do
     case state.turn == player do
-      true -> put_in(state.turn, next_turn(state, player))
+      true -> case Enum.count(state.table_pot.cards) do
+                3 -> state
+                _ -> put_in(state.turn, next_turn(state, player))
+              end
       false -> state
     end
   end
@@ -312,17 +319,17 @@ defmodule ThullaEngine.Table do
 
   defp test_deck() do
     [
-      ['AC', '3D'],
-      ['2C', '4D'],
-      ['4C', '5D'],
-      ['3S', '2D']
+      ['AC', '4H'],
+      ['2C', '3H'],
+      ['4C', '5H'],
+      ['3C', '2D']
     ]
   end
 
   ## Returns the deck chunked into 13 cards for each player
   defp chunked_deck() do
     {:ok, deck} = Deck.new()
-
+    :random.seed(:erlang.now)
     deck.content
     |> Enum.shuffle()
     |> Enum.chunk_every(13)
@@ -343,6 +350,14 @@ defmodule ThullaEngine.Table do
   defp reply_success(state, reply) do
     :ets.insert(:table_state, {state.game_id, state})
     {:reply, reply, state, @timeout}
+  end
+
+  defp add_table_pot_to_res(state) do
+    put_in(state.res, Map.put(state.res, :table_pot, TablePot.serialized_table_pot(state.table.table_pot)))
+  end
+
+  defp add_turn_to_res(state) do
+    put_in(state.res, Map.put(state.res, :next_turn, state.table.turn))
   end
 
   defp update_player_deck(state, card) do
@@ -406,16 +421,17 @@ defmodule ThullaEngine.Table do
         MapSet.union(state.table.players[player].deck, TablePot.get_cards(state.table.table_pot))
       )
 
-    temp = Map.put(%{}, :thulla_cards, TablePot.get_cards(state.table.table_pot))
-    temp = Map.put(temp, :thulla_player, player)
+    temp = Map.put(%{}, :thulla_cards, Enum.map(Enum.to_list(TablePot.get_cards(state.table.table_pot)), &(to_string(&1))))
+    temp = Map.put(temp, :thulla_player, player_to_index(player))
     put_in(s.res, temp)
   end
+
 
   defp add_thulla_card(state, player, card) do
     s =
       put_in(state.table.players[player].deck, MapSet.put(state.table.players[player].deck, card))
 
-    put_in(s.res.thulla_cards, MapSet.put(s.res.thulla_cards, card))
+    put_in(s.res.thulla_cards, s.res.thulla_cards ++ [to_string(card)])
   end
 
   defp new_turn(state, turns) do
@@ -457,7 +473,7 @@ defmodule ThullaEngine.Table do
     s =
       case Enum.count(p) do
         0 -> s
-        _ -> put_in(s.res, Map.put(s.res, :winners, p))
+        _ -> put_in(s.res, Map.put(s.res, :winners, l))
       end
 
     Enum.map(p, fn x -> put_in(s.table.players[x].winner, true) end)
@@ -465,9 +481,10 @@ defmodule ThullaEngine.Table do
 
     {:ok, rules} = Rules.check(s.table.rules, :game_over)
 
-    case Enum.count(s.table.players_turn) do
+    s = case Enum.count(s.table.players_turn) do
       1 ->
-        update_rules(s, rules) |> update_res()
+        update_rules(s, rules) 
+        |> update_res()
 
       0 ->
         update_rules(s, rules)
@@ -475,8 +492,18 @@ defmodule ThullaEngine.Table do
         |> update_res()
 
       _ ->
-        s
+        [first | second] = s.table.players_turn
+        [second | _] = second
+        first = get_player_from_index(first)
+        second = get_player_from_index(second)
+        cond do
+          s.table.players[first].joined == false -> update_res(s)
+          s.table.players[second].joined == false -> update_res(s)
+          true -> s
+        end
     end
+    IO.inspect s
+    s
   end
 
   defp update_res(state) do
@@ -514,7 +541,10 @@ defmodule ThullaEngine.Table do
   end
 
   defp remove_player_from_state(state, player) do
-    %{state | players_turn: List.delete(state.players_turn, player)}
+    case state.no_of_turns do
+      3 -> state
+      _ -> %{state | players_turn: List.delete(state.players_turn, player)}
+    end
   end
 
   defp get_index(state, player) do
@@ -534,7 +564,7 @@ defmodule ThullaEngine.Table do
     end
   end
 
-  defp player_to_index(player) do
+  def player_to_index(player) do
     case player do
       :player_one -> 0
       :player_two -> 1
